@@ -5,10 +5,10 @@ import time
 import matplotlib.pyplot as plt
 
 BAUDRATE = 115200
-PORT = 'COM7'  # set the correct port before run it
+PORT = 'COM6'  # set the correct port before run it
 
 GraphAccuracy = 0.100 # Each data point is about .1 seconds apart.
-GraphLength = 150 # Graph is 300 * .1s or 30 seconds.
+GraphLength = 100 # Graph is 300 * .1s or 30 seconds.
 Graph = [] # Graph data points
 GraphPosition = 0
 
@@ -22,7 +22,7 @@ for i in range(GraphLength):
     Graph.append([0, 0, 0, 0, 0])
     SetpointY.append(0)
     LuxY.append(0)
-    SecondsX.append(GraphLength/10 - (i * GraphAccuracy))
+    SecondsX.append(i * GraphAccuracy)
 
 z1serial = serial.Serial(port=PORT, baudrate=BAUDRATE)
 z1serial.timeout = 2  # set read timeout
@@ -40,15 +40,17 @@ if z1serial.is_open:
                 data = data.split()
                 if(len(data) != 5): # Ignore rows that come in janky.
                     continue
-                print(data[0] + ' ' + data[1] + ' ' + data[2] + ' ' + data[3] + ' ' + data[4])
                 Graph[GraphLength - 1] = [int(data[0]), int(data[1]), int(data[2]), int(data[3]), int(data[4])]
             EndTime = time.process_time()
         for i in range(1, GraphLength): # Shift graph points.
             Graph[i - 1] = Graph[i]
             SetpointY[i - 1] = Graph[i - 1][0]
             LuxY[i - 1] = Graph[i - 1][1]
+        print(data[0] + ' ' + data[1] + ' ' + data[2] + ' ' + data[3] + ' ' + data[4])
         # Plot graph
         plt.cla()
+        SetpointY[GraphLength - 1] = SetpointY[GraphLength - 2]
+        LuxY[GraphLength - 1] = LuxY[GraphLength - 2]
         plt.plot(SecondsX, SetpointY, label = "Setpoint")
         plt.plot(SecondsX, LuxY, label = "Lux")
         plt.xlabel('Seconds')
