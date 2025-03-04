@@ -119,7 +119,7 @@ void Update7Display(uint16_t Setpoint, uint16_t Lux)
 /*
 	Update the PID.
 */
-double updatePID(pid_t *pid, float error, float position, bool kpToggle, bool kiToggle, bool kdToggle) {
+float updatePID(pid_t *pid, float error, float preverror, bool kpToggle, bool kiToggle, bool kdToggle) {
 	float pTerm, dTerm, iTerm;
 
 	// calculate the proportional term
@@ -147,8 +147,8 @@ double updatePID(pid_t *pid, float error, float position, bool kpToggle, bool ki
 
 	if (kdToggle) {
 		// calculate the derivative
-		dTerm = pid->derGain * (pid->derState - position);
-		pid->derState = position;
+		dTerm = pid->derGain * (pid->derState - preverror);
+		pid->derState = preverror;
 	}
 	else {
 		dTerm = 0;

@@ -43,12 +43,9 @@ Description: The application for Project 2 for ECE 544.
 #define mainDONT_BLOCK						( portTickType ) 0
 
 //---| Project Defines |---
-#define MAX_LUX 999
-#define MIN_LUX 0
-#define MAX_DUTY_CYCLE 1023
-#define MIN_DUTY_CYCLE 0
-#define DCINCR			5		// duty cycle increments, about 15 steps for each duty cycle
-#define MAXBRIGHTNESS	255		// max brightness/duty cycle of rgb2 (based on self test where 99% = 255)
+#define MAX_PWM 255
+#define MIN_PWM 0
+
 //These are defines for the PID controller task's control message.
 #define PID_CTRL_PC_ENABLE		1 //Enable Proportional Control
 #define PID_CTRL_IC_ENABLE		2 //Enable Integral Control
@@ -133,7 +130,7 @@ void ParseInputTask(void *p)
 					MessageBitMask |= PID_CTRL_SET_INCR_10;
 					break;
 			}
-			switch((Switches & 0x30) >> 6) //Get which constant to change.
+			switch((Switches & 0xC0) >> 6) //Get which constant to change.
 			{
 				case 1: //Update Kp.
 					MessageBitMask |= PID_CTRL_KP_UPDATE;
@@ -186,7 +183,7 @@ void DisplayTask(void *p)
 	}
 }
 
-uint32_t PIDT_Increment(uint32_t MessageBitMask)
+int PIDT_Increment(uint32_t MessageBitMask)
 {
 	return 0 - (((MessageBitMask & PID_CTRL_SET_DECREMENT) != 0)) *
 			(((MessageBitMask & PID_CTRL_SET_INCR_01) != 0) +
@@ -200,33 +197,36 @@ uint32_t PIDT_Increment(uint32_t MessageBitMask)
 
 void PIDTask(void *p)
 {
+	uint32_t GetMBM = 0;
 	uint32_t MessageBitMask = 0;
+	uint32_t MessageDisplay = 0;
 	uint32_t Setpoint = 500; //Start setpoint at 500.
 	uint32_t Lux = 0; //Lux read from sensor.
 	float LuxF = 0; //Float lux value.
-	float Kp = 5;
-	float Ki = 5;
-	float Kd = 5;
+	float Kp = 0;
+	float Ki = 1;
+	float Kd = 0;
 	static pid_t pid;
 	float pid_error; //How far from the setpoint we are.
+	float pid_error_prev; // previous error
 	float drive;
 	long ReceivedMessage = pdFALSE;
 	static bool isInitialized = false;
 	static uint16_t pwm_led;
-	uint16_t brightness;
 	while(1)
 	{
 		//GetLux
 		LuxF = tsl2561_calculateLux(tsl2561_readChannel(&TSL2561_Sensor, 0),
 				tsl2561_readChannel(&TSL2561_Sensor, 1));
 		Lux = (uint32_t) LuxF;
-		MessageBitMask = Setpoint | (Lux << 16); //Send setpoint and lux data.
-		xQueueSend(Queue_PIDT_DT, &MessageBitMask, mainDONT_BLOCK); //Send message to Display task.
+		MessageDisplay = Setpoint | (Lux << 16); //Send setpoint and lux data.
+		xQueueSend(Queue_PIDT_DT, &MessageDisplay, mainDONT_BLOCK); //Send message to Display task.
 		xSemaphoreGive(Semaphore_Display);
 		if(xSemaphoreTake(Semaphore_PID, 1))
 		{
-			ReceivedMessage = xQueueReceive(Queue_PIT_PIDT, &MessageBitMask, pdMS_TO_TICKS(50)); //Get message from Parse Input task.
+			ReceivedMessage = xQueueReceive(Queue_PIT_PIDT, &GetMBM, pdMS_TO_TICKS(50)); //Get message from Parse Input task.
 			if(ReceivedMessage == pdFALSE){continue;} //Skip rest of loop.
+			MessageBitMask = GetMBM;
 			//If we pushed an increment or decrement button.
 			if((MessageBitMask & PID_CTRL_SET_DECREMENT) || (MessageBitMask & PID_CTRL_SET_INCREMENT))
 			{
@@ -236,24 +236,24 @@ void PIDTask(void *p)
 				}
 				else if(MessageBitMask & PID_CTRL_KP_UPDATE)
 				{
-					Kp += PIDT_Increment(MessageBitMask);
+					Kp += (float) PIDT_Increment(MessageBitMask);
 				}
 				else if(MessageBitMask & PID_CTRL_KI_UPDATE)
 				{
-					Ki += PIDT_Increment(MessageBitMask);
+					Ki += (float) PIDT_Increment(MessageBitMask);
 				}
 				else if(MessageBitMask & PID_CTRL_KD_UPDATE)
 				{
-					Kd += PIDT_Increment(MessageBitMask);
+					Kd += (float) PIDT_Increment(MessageBitMask);
 				}
 			}
 		}
 		//Update PID stuff.
 		if (!isInitialized) {
-			pid.integratMax = MAX_LUX;
-			pid.integratMin = MIN_LUX;
-			pwm_led = MAX_DUTY_CYCLE / 2;
-			brightness = 0;
+			pid.integratMax = MAX_PWM;
+			pid.integratMin = MIN_PWM;
+			pwm_led = MAX_PWM / 2;
+			pid_error_prev = 0;
 			isInitialized = true;
 		}
 		pid.propGain = Kp;
@@ -261,26 +261,15 @@ void PIDTask(void *p)
 		pid.derGain = Kd;
 		/* calculate error */
 		pid_error = Setpoint - LuxF;
-		drive = updatePID(&pid, pid_error, LuxF, MessageBitMask & PID_CTRL_PC_ENABLE,
-											MessageBitMask & PID_CTRL_IC_ENABLE,
-											MessageBitMask & PID_CTRL_DC_ENABLE);
-		if(drive)
-		{
-			xil_printf("Drive: %i\r\n", (int) drive);
-		}
+		drive = updatePID(&pid, pid_error, pid_error_prev, MessageBitMask & PID_CTRL_PC_ENABLE,
+														   MessageBitMask & PID_CTRL_IC_ENABLE,
+														   MessageBitMask & PID_CTRL_DC_ENABLE);
+		pid_error_prev = pid_error;
 		/* Adjust PWM and then drive PWM signal to LED */
-		// if error is positive, means luxReading needs to increase -> increase PWM/brightness
-		if (pid_error > 0) {
-			pwm_led = ((pwm_led + DCINCR) <= MAX_DUTY_CYCLE) ? pwm_led + DCINCR : MAX_DUTY_CYCLE;
-		}
-		// if error is negative, means luxReading needs to decrease -> decrease PWM/brightness
-		else if (pid_error < 0) {
-			pwm_led = ((pwm_led - DCINCR) >= MIN_DUTY_CYCLE) ? pwm_led - DCINCR : MIN_DUTY_CYCLE;
-		}
-		// Convert to brightness and write to LED (brightness will be 0-255)
-		brightness = (((float)pwm_led) / ((float)MAX_DUTY_CYCLE)) * MAXBRIGHTNESS;
-		xil_printf("pwm_led | brightness: %i | %i\r\n", pwm_led, (int) brightness);
-		NX4IO_RGBLED_setDutyCycle(RGB1, 0, 0, brightness);
+		// clamp the value between 0 and 255
+		pwm_led = (drive > MAX_PWM) ? MAX_PWM : (drive < MIN_PWM) ? MIN_PWM : drive;
+		xil_printf("%i %i %i %i %i\r\n", Setpoint, Lux, (int) Kp, (int) Ki, (int) Kd);
+		NX4IO_RGBLED_setDutyCycle(RGB1, 0, 0, pwm_led);
 	}
 }
 

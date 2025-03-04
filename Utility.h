@@ -32,6 +32,6 @@ void Update7Display(uint16_t Setpoint, uint16_t Lux);
 /*
 	Update the PID.
 */
-double updatePID(pid_t *pid, float error, float position, bool kpToggle, bool kiToggle, bool kdToggle);
+float updatePID(pid_t *pid, float error, float position, bool kpToggle, bool kiToggle, bool kdToggle);
 
 
