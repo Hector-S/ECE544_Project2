@@ -51,7 +51,7 @@ if z1serial.is_open:
         plt.cla()
         plt.plot(SecondsX, SetpointY, label = "Setpoint")
         plt.plot(SecondsX, LuxY, label = "Lux")
-        plt.xlabel('0.1 Seconds')
+        plt.xlabel('Seconds')
         plt.ylabel('Lux')
         plt.title('Project 2 Realtime Graph')
         plt.pause(0.01)
